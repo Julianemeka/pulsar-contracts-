@@ -13,6 +13,8 @@
 
 "use strict";
 
+const fs = require("fs");
+const https = require("https");
 const { Horizon } = require("@stellar/stellar-sdk");
 const config = require("./config");
 const { Metrics } = require("./metrics");
@@ -20,7 +22,35 @@ const { alert } = require("./alerts");
 
 // ── Horizon client ─────────────────────────────────────────────────────────
 
-const server = new Horizon.Server(config.horizonUrl);
+/**
+ * Build the options object passed to Horizon.Server.
+ *
+ * SEC-015: the monitoring service should only connect to official Horizon
+ * URLs or audited mirrors. When a custom CA bundle is supplied via the
+ * HORIZON_CA_CERT environment variable (exposed as config.horizonCaCert),
+ * it is loaded from disk and used to validate the Horizon endpoint's TLS
+ * certificate. This supports self-hosted / corporate environments that
+ * terminate TLS with a private CA, without disabling certificate validation.
+ *
+ * If no CA bundle is configured, default behaviour (system trust store) is
+ * preserved.
+ *
+ * @returns {object} Options for the Horizon.Server constructor.
+ */
+function buildHorizonOptions() {
+  if (!config.horizonCaCert) {
+    return {};
+  }
+
+  const ca = fs.readFileSync(config.horizonCaCert, "utf8");
+  const agent = new https.Agent({ ca, keepAlive: true });
+
+  // The Stellar SDK accepts an `agent` option for its HTTP client.
+  return { agent };
+}
+
+const horizonOptions = buildHorizonOptions();
+const server = new Horizon.Server(config.horizonUrl, horizonOptions);
 
 // ── Metric store ───────────────────────────────────────────────────────────
 
@@ -193,10 +223,22 @@ function scheduleNextPoll() {
 // ── Entry point ────────────────────────────────────────────────────────────
 
 async function main() {
+  // SEC-015: surface TLS configuration at startup.
+  if (config.horizonCaCert) {
+    console.log(
+      `[monitor] Using custom CA bundle for Horizon TLS: ${config.horizonCaCert}`
+    );
+  } else {
+    console.log(
+      "[monitor] Using system trust store for Horizon TLS (no custom CA bundle)."
+    );
+  }
+
   await alert(
     "info",
     `Pulsar contract monitor starting. contract=${config.contractId} ` +
-      `horizon=${config.horizonUrl} poll_interval=${config.pollIntervalMs}ms`
+      `horizon=${config.horizonUrl} poll_interval=${config.pollIntervalMs}ms ` +
+      `custom_ca=${config.horizonCaCert ? "yes" : "no"}`
   );
 
   // Log initial metric snapshot.
