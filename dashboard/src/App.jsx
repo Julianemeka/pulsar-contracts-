@@ -6,7 +6,12 @@ import MerchantProfile from './components/MerchantProfile';
 import AdminPanel from './components/AdminPanel';
 import './App.css';
 
-const TABS = ['Payments', 'Refunds', 'Profile', 'Admin'];
+const TABS = [
+  { id: 'Payments', label: 'Payments' },
+  { id: 'Refunds', label: 'Refunds' },
+  { id: 'Profile', label: 'Profile' },
+  { id: 'Admin', label: 'Admin' },
+];
 
 export default function App() {
   const {
