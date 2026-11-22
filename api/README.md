@@ -99,6 +99,36 @@ Query parameters:
 - `sort_field` (optional): "Date" or "Amount"
 - `sort_order` (optional): "Ascending" or "Descending"
 
+## Audit Logging
+
+All admin-equivalent API calls are recorded in a structured, append-only audit log for
+post-incident forensics. Each entry captures:
+
+- Timestamp (ISO 8601)
+- Caller IP address
+- Endpoint (path)
+- HTTP method
+- Response status code
+- Wallet address(es) involved in the request (e.g. `merchant_address`, `payer`, `caller`)
+
+Entries are written append-only to a dedicated log file. The file path is configurable via
+the `AUDIT_LOG_PATH` environment variable (defaults to `api/logs/audit.log`).
+
+```bash
+export AUDIT_LOG_PATH=/var/log/pulsar/audit.log
+```
+
+### Retention Policy
+
+Audit log entries are retained for **90 days**. After this period, entries should be
+archived or purged according to your organization's data-retention policy. Operators are
+responsible for rotating and pruning the audit log file on this schedule.
+
+### PII Notice
+
+Wallet addresses recorded in the audit log are treated as business-critical PII. Access to
+the audit log file must be restricted to authorized personnel only.
+
 ## Error Responses
 
 All errors follow the format:
