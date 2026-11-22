@@ -41,9 +41,25 @@ function cacheKeyFor(req: Request): string {
   return `${req.path}?${sorted}`;
 }
 
+/** Parses a positive integer from an env var, falling back to `fallback` when unset or invalid. */
+function intFromEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 export function createAnalyticsRouter(databaseUrl: string): express.Router {
   const router = express.Router();
-  const db = new Pool({ connectionString: databaseUrl });
+  const poolConfig = {
+    max: intFromEnv("ANALYTICS_DB_POOL_MAX", 10),
+    idleTimeoutMillis: intFromEnv("ANALYTICS_DB_IDLE_TIMEOUT_MS", 30000),
+    connectionTimeoutMillis: intFromEnv("ANALYTICS_DB_CONNECTION_TIMEOUT_MS", 5000),
+  };
+  console.log(
+    `[analytics-service] DB pool config: max=${poolConfig.max}, idleTimeoutMillis=${poolConfig.idleTimeoutMillis}, connectionTimeoutMillis=${poolConfig.connectionTimeoutMillis}`
+  );
+  const db = new Pool({ connectionString: databaseUrl, ...poolConfig });
   const cache = new AnalyticsCache(cacheTtlFromEnv());
 
   router.get("/analytics/summary", async (req, res) => {
