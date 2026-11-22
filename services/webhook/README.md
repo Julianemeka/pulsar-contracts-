@@ -47,6 +47,38 @@ GET /webhooks/:merchantAddress
 DELETE /webhooks/:merchantAddress
 ```
 
+### Test a webhook
+
+Sends a synthetic `webhook_test` event to the merchant's registered URL so you can verify the endpoint is reachable and receiving payloads.
+
+```http
+POST /webhooks/test
+Content-Type: application/json
+
+{
+  "merchantAddress": "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+}
+```
+
+Response `200`:
+```json
+{
+  "merchantAddress": "GXXX...",
+  "url": "https://your-server.example.com/pulsar-events",
+  "statusCode": 200,
+  "body": "{\"received\":true}",
+  "deliveredAt": 1717200000000
+}
+```
+
+`statusCode` and `body` are the HTTP status code and response body returned by the target URL.
+
+This endpoint is rate-limited to **5 calls per minute per merchant**. Exceeding the limit returns `429`.
+
+Errors:
+- `404` — no webhook registration exists for the given `merchantAddress`
+- `429` — rate limit exceeded (5 calls per minute per merchant)
+
 ### Health endpoints
 
 #### `GET /health`
@@ -98,6 +130,7 @@ Every event delivers a `POST` to the registered URL with this JSON body:
 | `multisig_initiated` | A multisig payment was initiated |
 | `multisig_signed` | A signer signed a multisig payment |
 | `multisig_executed` | A multisig payment was executed |
+| `webhook_test` | A synthetic test event sent via `POST /webhooks/test` |
 
 ---
 

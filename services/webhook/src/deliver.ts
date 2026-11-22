@@ -35,8 +35,11 @@ export async function deliver(
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      await post(url, body);
-      return; // success — nothing to DLQ
+      const result = await postOnce(url, body);
+      if (result.statusCode >= 200 && result.statusCode < 300) {
+        return; // success — nothing to DLQ
+      }
+      throw new Error(`HTTP ${result.statusCode}`);
     } catch (err) {
       lastError = err instanceof Error ? err.message : String(err);
 
@@ -57,7 +60,18 @@ export async function deliver(
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
-function post(url: string, body: string): Promise<void> {
+export interface PostResult {
+  statusCode: number;
+  body: string;
+}
+
+/**
+ * Perform a single POST attempt to `url` and resolve with the target's HTTP
+ * status code and response body text.  Unlike the retrying `deliver` path,
+ * this does not reject on non-2xx responses — callers (e.g. the webhook test
+ * endpoint) need the raw status/body to report back to the merchant.
+ */
+export function postOnce(url: string, body: string): Promise<PostResult> {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
     const lib = parsed.protocol === "https:" ? https : http;
@@ -74,12 +88,15 @@ function post(url: string, body: string): Promise<void> {
         },
       },
       (res) => {
-        if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-          resolve();
-        } else {
-          reject(new Error(`HTTP ${res.statusCode}`));
-        }
-        res.resume();
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("end", () => {
+          resolve({
+            statusCode: res.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString("utf8"),
+          });
+        });
+        res.on("error", reject);
       },
     );
     req.on("error", reject);

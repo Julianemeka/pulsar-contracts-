@@ -272,6 +272,27 @@ Deactivates a merchant. Callable by the merchant themselves or the admin.
 
 ---
 
+#### `self_deactivate_merchant(merchant_address: Address)`
+
+Merchant self-service deactivation. The caller must authenticate as
+`merchant_address` and can only deactivate their own account — attempting to
+deactivate any other merchant fails with `Unauthorized`.
+
+Deactivating the account also **cancels all active subscriptions** for the
+merchant. Emits the `merchant_deactivated` event with `merchant_address` and
+`caller` both set to the merchant's address.
+
+**Parameters**
+
+| Name               | Type      |
+|---|---|
+| `merchant_address` | `Address` |
+
+**Errors**: `Unauthorized` (caller is not `merchant_address`), `MerchantNotFound`,
+`MerchantInactive` (merchant is already deactivated)
+
+---
+
 #### `get_merchant(merchant_address: Address) → Merchant`
 
 Returns the `Merchant` struct.
@@ -404,6 +425,36 @@ Removes payments older than the configured cleanup period.
 #### `set_payment_cleanup_period(admin: Address, period: u64)`
 
 Default: `7,776,000` seconds (90 days).
+
+---
+
+### Webhooks
+
+#### `POST /webhooks/test`
+
+Delivers a synthetic `webhook_test` event to the merchant's registered webhook
+URL so integrators can verify their endpoint is configured correctly and
+receiving payloads.
+
+**Request body**
+
+| Field             | Type     | Description |
+|---|---|---|
+| `merchantAddress` | `string` | Merchant whose registered webhook URL receives the test event |
+
+**Response**
+
+| Field        | Type     | Description |
+|---|---|---|
+| `statusCode` | `number` | HTTP status code returned by the target URL |
+| `body`       | `string` | Response body returned by the target URL |
+
+**Rate limit**: 5 calls per minute per merchant. Exceeding the limit returns
+HTTP `429 Too Many Requests`.
+
+**Errors**: `401 Unauthorized` (merchant not authenticated), `404 Not Found`
+(no webhook registered for the merchant), `429 Too Many Requests` (rate limit
+exceeded).
 
 ---
 

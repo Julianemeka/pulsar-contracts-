@@ -99,6 +99,26 @@ Query parameters:
 - `sort_field` (optional): "Date" or "Amount"
 - `sort_order` (optional): "Ascending" or "Descending"
 
+**GET /api/payments?merchant=G...&format=csv**
+
+Export merchant payment history as a downloadable CSV file.
+
+Query parameters:
+- `merchant` (required): Merchant address
+- `format=csv` (required): Requests CSV output instead of JSON
+- Supports the same filters as the JSON endpoint (`date_start`, `date_end`, `status`, etc.)
+
+The response is a CSV file with the following columns:
+- `order_id`
+- `merchant_address`
+- `payer`
+- `token`
+- `amount`
+- `status`
+- `paid_at`
+
+The response sets `Content-Disposition: attachment; filename=payments.csv` so browsers download the file directly.
+
 ## Error Responses
 
 All errors follow the format:
