@@ -14,6 +14,15 @@ const db = new Pool({ connectionString: DATABASE_URL });
 const app = express();
 app.use(express.json());
 
+// ── Watched events ────────────────────────────────────────────────────────────
+// Event topics the indexer recognizes. All contract events are still stored,
+// but these are the ones surfaced/documented for downstream consumers.
+const WATCHED_EVENTS = new Set([
+  'refund_created',
+  'refund_claimed',
+  'refund_dispute_resolved',
+]);
+
 // ── REST API ──────────────────────────────────────────────────────────────────
 
 app.get('/events', async (req, res) => {
@@ -75,14 +84,19 @@ async function poll() {
     });
 
     for (const event of response.events) {
+      const type = event.topic[0]?.toString() ?? 'unknown';
       await saveEvent({
         ledger: event.ledger,
         txHash: event.txHash,
         contractId: event.contractId,
-        type: event.topic[0]?.toString() ?? 'unknown',
+        type,
         topic: event.topic.map(t => t.toString()),
         value: event.value,
       });
+
+      if (WATCHED_EVENTS.has(type)) {
+        console.log(`Watched event ${type} at ledger ${event.ledger}`);
+      }
     }
 
     if (response.events.length) {

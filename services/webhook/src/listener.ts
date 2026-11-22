@@ -8,6 +8,7 @@ const WATCHED_EVENTS = new Set([
   "refund_approved",
   "refund_rejected",
   "refund_executed",
+  "refund_dispute_resolved",
   "multisig_initiated",
   "multisig_signed",
   "multisig_executed",
