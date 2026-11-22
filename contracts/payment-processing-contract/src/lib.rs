@@ -715,6 +715,7 @@ impl PaymentContract {
         helper::validate_amount(order.amount)?;
         helper::validate_order_id(&order.order_id)?;
         helper::validate_metadata(&order.metadata)?;
+        helper::validate_metadata_size(&order.metadata)?;
         if storage::get_payment(&env, &order.order_id).is_some() {
             return Err(PaymentError::PaymentAlreadyExists);
         }
@@ -1226,6 +1227,46 @@ impl PaymentContract {
         Err(PaymentError::InvalidInput)
     }
 
+    /// Update the metadata field of an existing payment record.
+    ///
+    /// Only the merchant that owns the payment may update its metadata. The
+    /// new metadata is validated against [`helper::MAX_METADATA_SIZE_BYTES`]
+    /// before being written to storage, so the cap cannot be bypassed by
+    /// updating an existing record.
+    ///
+    /// # Parameters
+    /// - `merchant_address` — The merchant owning the payment; must be authenticated.
+    /// - `order_id` — The order ID of the payment to update.
+    /// - `metadata` — The new metadata bytes (max `MAX_METADATA_SIZE_BYTES`).
+    ///
+    /// # Errors
+    /// - [`PaymentError::PaymentNotFound`] if no payment exists for `order_id`.
+    /// - [`PaymentError::Unauthorized`] if `merchant_address` is not the payment's merchant.
+    /// - [`PaymentError::InvalidInput`] if `metadata` exceeds the size limit.
+    pub fn update_payment_metadata(
+        env: Env,
+        merchant_address: Address,
+        order_id: Bytes,
+        metadata: Bytes,
+    ) -> Result<(), PaymentError> {
+        storage::bump_instance_ttl(&env);
+        if storage::is_paused(&env) { return Err(PaymentError::ContractPaused); }
+        merchant_address.require_auth();
+        helper::validate_metadata_size(&metadata)?;
+        let mut record =
+            storage::get_payment(&env, &order_id).ok_or(PaymentError::PaymentNotFound)?;
+        if merchant_address != record.merchant_address {
+            return Err(PaymentError::Unauthorized);
+        }
+        record.metadata = metadata.clone();
+        storage::save_payment(&env, &record);
+        env.events().publish(
+            (String::from_str(&env, "payment_metadata_updated"),),
+            (order_id, merchant_address),
+        );
+        Ok(())
+    }
+
     /// Permanently remove a payment record from storage. Admin only.
     ///
     /// Also removes the record from the merchant, payer, and global payment
@@ -1686,6 +1727,7 @@ impl PaymentContract {
         initiator.require_auth();
         helper::validate_amount(order.amount)?;
         helper::validate_metadata(&order.metadata)?;
+        helper::validate_metadata_size(&order.metadata)?;
         if storage::get_multisig(&env, &payment_id).is_some() {
             return Err(PaymentError::PaymentAlreadyExists);
         }

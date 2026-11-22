@@ -33,7 +33,7 @@ use proptest::prelude::*;
 use alloc::vec::Vec;
 
 use crate::error::PaymentError;
-use crate::helper::{matches_filter, validate_amount};
+use crate::helper::{matches_filter, validate_amount, validate_metadata_size, MAX_METADATA_SIZE_BYTES};
 use crate::types::{PaymentFilter, PaymentRecord, PaymentStatus, StatusFilter};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -327,5 +327,80 @@ proptest! {
         // With cap=0 and records present, next_cursor behaviour is implementation-defined;
         // we just assert the page is empty.
         let _ = next_cursor;
+    }
+}
+
+// ── Property 4: validate_metadata_size ───────────────────────────────────────
+//
+// Metadata is stored as a map of key/value byte strings. The contract must
+// never persist metadata whose combined key+value byte size exceeds
+// `MAX_METADATA_SIZE_BYTES`, regardless of how many entries are supplied or
+// how long each key/value is.
+
+/// Build a metadata map from plain-Rust `(key, value)` byte pairs.
+fn make_metadata(env: &soroban_sdk::Env, entries: &[(Vec<u8>, Vec<u8>)]) -> soroban_sdk::Map<soroban_sdk::String, soroban_sdk::String> {
+    let mut map = soroban_sdk::Map::new(env);
+    for (k, v) in entries {
+        let key = soroban_sdk::String::from_str(env, core::str::from_utf8(k).unwrap_or("k"));
+        let val = soroban_sdk::String::from_str(env, core::str::from_utf8(v).unwrap_or("v"));
+        map.set(key, val);
+    }
+    map
+}
+
+/// Combined byte size of all keys and values in a metadata map.
+fn metadata_byte_size(entries: &[(Vec<u8>, Vec<u8>)]) -> usize {
+    entries.iter().map(|(k, v)| k.len() + v.len()).sum()
+}
+
+proptest! {
+    /// `validate_metadata_size` returns `Ok` iff the combined key+value byte
+    /// size is within `MAX_METADATA_SIZE_BYTES`, and `Err(InvalidInput)`
+    /// otherwise — for arbitrary entry counts and key/value lengths.
+    #[test]
+    fn prop_validate_metadata_size_never_exceeds_limit(
+        entries in prop::collection::vec(
+            (
+                prop::collection::vec(any::<u8>(), 0..64),
+                prop::collection::vec(any::<u8>(), 0..64),
+            ),
+            0..16usize,
+        ),
+    ) {
+        use soroban_sdk::Env;
+        let env = Env::default();
+        let metadata = make_metadata(&env, &entries);
+        let total = metadata_byte_size(&entries);
+
+        let result = validate_metadata_size(&metadata);
+
+        if total <= MAX_METADATA_SIZE_BYTES {
+            prop_assert_eq!(result, Ok(()));
+        } else {
+            prop_assert_eq!(result, Err(PaymentError::InvalidInput));
+        }
+    }
+
+    /// A single oversized key/value pair is always rejected.
+    #[test]
+    fn prop_validate_metadata_size_oversized_single_entry(
+        key_len in 0usize..(MAX_METADATA_SIZE_BYTES + 1),
+        value_len in 0usize..(MAX_METADATA_SIZE_BYTES + 1),
+    ) {
+        use soroban_sdk::Env;
+        let env = Env::default();
+        let key: Vec<u8> = core::iter::repeat(b'k').take(key_len).collect();
+        let value: Vec<u8> = core::iter::repeat(b'v').take(value_len).collect();
+        let entries = alloc::vec![(key, value)];
+        let metadata = make_metadata(&env, &entries);
+        let total = key_len + value_len;
+
+        let result = validate_metadata_size(&metadata);
+
+        if total <= MAX_METADATA_SIZE_BYTES {
+            prop_assert_eq!(result, Ok(()));
+        } else {
+            prop_assert_eq!(result, Err(PaymentError::InvalidInput));
+        }
     }
 }

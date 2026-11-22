@@ -4,22 +4,70 @@ import { invoke, view } from "../contractClient.js";
 
 const router = Router();
 
+const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
+const idempotencyCache = new Map();
+
+function getCachedResponse(key) {
+  const entry = idempotencyCache.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    idempotencyCache.delete(key);
+    return null;
+  }
+  return entry;
+}
+
+function setCachedResponse(key, status, body) {
+  idempotencyCache.set(key, { status, body, expiresAt: Date.now() + IDEMPOTENCY_TTL_MS });
+}
+
+function isPaymentAlreadyExists(err) {
+  const candidates = [err?.message, err?.code, err?.name, err?.response?.data?.error?.code, err?.response?.data?.error?.message];
+  return candidates.some((c) => typeof c === "string" && c.includes("PaymentAlreadyExists"));
+}
+
 /**
  * POST /api/payments
+ * Headers: { Idempotency-Key }
  * Body: { payer, order: { order_id, merchant_address, payer, token, amount, description, expires_at }, signature }
  */
 router.post("/", async (req, res, next) => {
   try {
+    const idempotencyKey = req.get("Idempotency-Key");
+
+    if (idempotencyKey) {
+      const cached = getCachedResponse(idempotencyKey);
+      if (cached) {
+        return res.status(cached.status).json({ ...cached.body, idempotent: true });
+      }
+    }
+
     const { payer, order, signature } = req.body;
     if (!payer || !order || !signature) {
       return res.status(422).json({ error: { code: "InvalidInput", message: "Missing required fields" } });
     }
-    await invoke("process_payment_with_signature", [
-      nativeToScVal(payer, { type: "address" }),
-      orderToScVal(order),
-      nativeToScVal(Buffer.from(signature, "hex"), { type: "bytes" }),
-    ]);
-    res.status(201).json({ message: "Payment processed" });
+
+    let status;
+    let body;
+    try {
+      await invoke("process_payment_with_signature", [
+        nativeToScVal(payer, { type: "address" }),
+        orderToScVal(order),
+        nativeToScVal(Buffer.from(signature, "hex"), { type: "bytes" }),
+      ]);
+      status = 201;
+      body = { message: "Payment processed" };
+    } catch (err) {
+      if (!isPaymentAlreadyExists(err)) throw err;
+      status = 200;
+      body = { message: "Payment already processed", idempotent: true };
+    }
+
+    if (idempotencyKey) {
+      setCachedResponse(idempotencyKey, status, body);
+    }
+
+    res.status(status).json(body);
   } catch (err) {
     next(err);
   }

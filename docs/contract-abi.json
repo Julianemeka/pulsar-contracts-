@@ -63,7 +63,7 @@
     },
     {
       "name": "process_payment_with_signature",
-      "doc": "Transfers tokens from payer to merchant after verifying an ed25519 signature over the PaymentOrder.",
+      "doc": "Transfers tokens from payer to merchant after verifying an ed25519 signature over the PaymentOrder. PaymentOrder.metadata is capped at MAX_METADATA_SIZE_BYTES (1024 bytes, combined keys and values); exceeding the limit returns InvalidInput.",
       "inputs": [
         { "name": "payer",                "type": "Address" },
         { "name": "order",                "type": "PaymentOrder" },
@@ -175,7 +175,7 @@
     },
     {
       "name": "initiate_multisig_payment",
-      "doc": "Creates a multisig payment that requires all listed signers to sign before execution.",
+      "doc": "Creates a multisig payment that requires all listed signers to sign before execution. PaymentOrder.metadata is capped at MAX_METADATA_SIZE_BYTES (1024 bytes, combined keys and values); exceeding the limit returns InvalidInput.",
       "inputs": [
         { "name": "initiator",         "type": "Address" },
         { "name": "payment_id",        "type": "Bytes" },
@@ -276,7 +276,8 @@
         { "name": "token",             "type": "Address" },
         { "name": "amount",            "type": "i128" },
         { "name": "description",       "type": "String" },
-        { "name": "expires_at",        "type": "u64",    "doc": "Unix timestamp (seconds). 0 = never expires." }
+        { "name": "expires_at",        "type": "u64",    "doc": "Unix timestamp (seconds). 0 = never expires." },
+        { "name": "metadata",          "type": "Map<String, String>", "doc": "Optional key/value metadata. Combined keys and values are capped at MAX_METADATA_SIZE_BYTES (1024 bytes); exceeding the limit returns InvalidInput." }
       ]
     },
     "PaymentRecord": {
@@ -483,6 +484,9 @@
     { "code": 41, "name": "MultisigAlreadySigned",       "description": "This signer has already signed — safe to treat as idempotent" },
     { "code": 42, "name": "MultisigAlreadyExecuted",     "description": "Multisig payment has already been executed — safe to treat as idempotent" },
     { "code": 43, "name": "InsufficientSignatures",      "description": "Not all required signers have signed" },
-    { "code": 50, "name": "InvalidInput",                "description": "General input validation failure" }
+    { "code": 50, "name": "InvalidInput",                "description": "General input validation failure, including metadata exceeding MAX_METADATA_SIZE_BYTES (1024 bytes, combined keys and values)" }
+  ],
+  "constants": [
+    { "name": "MAX_METADATA_SIZE_BYTES", "type": "u32", "value": 1024, "doc": "Maximum combined size in bytes of PaymentOrder.metadata keys and values. Enforced on every code path that writes metadata to storage; exceeding it returns InvalidInput." }
   ]
 }

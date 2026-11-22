@@ -144,16 +144,23 @@ pub fn validate_order_id(order_id: &Bytes) -> Result<(), PaymentError> {
     Ok(())
 }
 
-/// Validate optional payment metadata (MISC-013).
+/// Validate the size of optional payment metadata (MISC-013, SC-041).
 ///
 /// Enforces that the combined byte length of every key and value in the map
 /// does not exceed [`MAX_METADATA_SIZE_BYTES`]. A missing map (`None`) is
 /// always valid and costs nothing.
 ///
+/// This is the single canonical size check. Every code path that writes
+/// metadata to storage (creation, updates, etc.) must call this helper so the
+/// cap cannot be bypassed by mutating an existing record.
+///
 /// # Errors
 /// Returns [`PaymentError::InvalidInput`] when the combined size of all keys
-/// and values exceeds [`MAX_METADATA_SIZE_BYTES`].
-pub fn validate_metadata(metadata: &Option<Map<String, String>>) -> Result<(), PaymentError> {
+/// and values exceeds [`MAX_METADATA_SIZE_BYTES`], or
+/// [`PaymentError::ArithmeticError`] on overflow while summing sizes.
+pub fn validate_metadata_size(
+    metadata: &Option<Map<String, String>>,
+) -> Result<(), PaymentError> {
     let Some(map) = metadata else {
         return Ok(());
     };
@@ -168,6 +175,18 @@ pub fn validate_metadata(metadata: &Option<Map<String, String>>) -> Result<(), P
         }
     }
     Ok(())
+}
+
+/// Validate optional payment metadata (MISC-013).
+///
+/// Thin wrapper around [`validate_metadata_size`] kept for backwards
+/// compatibility with existing call sites.
+///
+/// # Errors
+/// Returns [`PaymentError::InvalidInput`] when the combined size of all keys
+/// and values exceeds [`MAX_METADATA_SIZE_BYTES`].
+pub fn validate_metadata(metadata: &Option<Map<String, String>>) -> Result<(), PaymentError> {
+    validate_metadata_size(metadata)
 }
 
 /// Verify an ed25519 signature over `payload` using `public_key`.

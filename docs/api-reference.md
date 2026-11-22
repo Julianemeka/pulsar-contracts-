@@ -121,6 +121,7 @@ Used as input to `process_payment_with_signature` and `initiate_multisig_payment
 | `amount`           | `i128`    | Payment amount in the token's smallest unit |
 | `description`      | `String`  | Human-readable description |
 | `expires_at`       | `u64`     | Unix timestamp (seconds). `0` = never expires |
+| `metadata`         | `Bytes`   | Optional opaque metadata. **Max 1024 bytes** (`MAX_METADATA_SIZE_BYTES`) |
 
 ---
 
@@ -295,11 +296,53 @@ verifying that `signature` is a valid ed25519 signature of the serialised
 | `signature`          | `BytesN<64>`   |
 | `merchant_public_key`| `BytesN<32>`   |
 
-**Errors**: `MerchantNotFound`, `MerchantInactive`, `PaymentAlreadyExists` (idempotent), `InvalidAmount`, `InvalidSignature`, `PaymentExpired`
+**Errors**: `MerchantNotFound`, `MerchantInactive`, `PaymentAlreadyExists` (idempotent), `InvalidAmount`, `InvalidSignature`, `PaymentExpired`, `InvalidInput` (metadata too large)
 
 > **Idempotency**: `PaymentAlreadyExists` means the same `order_id` was already
 > processed. Off-chain clients should treat this as a success on retry. See
 > [IDEMPOTENCY_GUIDE.md](./IDEMPOTENCY_GUIDE.md).
+
+> **Metadata size limit**: `order.metadata` is capped at **1024 bytes**
+> (`helper::MAX_METADATA_SIZE_BYTES`). The limit is validated by the standalone
+> `validate_metadata_size` helper, which is invoked on **every** code path that
+> writes metadata to storage (including any future metadata update operations),
+> so oversized metadata can never be persisted. Exceeding the limit fails with
+> `InvalidInput`.
+
+---
+
+### HTTP API: `POST /api/payments`
+
+The backend exposes `POST /api/payments` as a thin wrapper around
+`process_payment_with_signature`.
+
+#### `Idempotency-Key` header
+
+Clients **should** send an `Idempotency-Key` request header with every call:
+
+- Use a **stable, unique key per logical payment** (e.g. a UUID generated once
+  and reused for all retries of that payment). Do not generate a new key on
+  retry, or the retry will be treated as a new submission.
+- The server caches the response for a given key for **24 hours**.
+- On replay (same key within the cache window), the server returns the
+  **cached response** instead of submitting a new payment. The replayed
+  response includes `idempotent: true` so clients can distinguish it from a
+  fresh submission.
+- After 24 hours the cache entry expires and the key may be reused.
+
+```http
+POST /api/payments
+Content-Type: application/json
+Idempotency-Key: 6f1c2b9e-3a4d-4f8e-9c1a-2b7d5e0f8a31
+
+{ "payer": "G...", "order": { ... }, "signature": "...", "merchantPublicKey": "..." }
+```
+
+```json
+{ "success": true, "idempotent": true, "payment": { ... } }
+```
+
+See [IDEMPOTENCY_GUIDE.md](./IDEMPOTENCY_GUIDE.md) for end-to-end retry guidance.
 
 ---
 

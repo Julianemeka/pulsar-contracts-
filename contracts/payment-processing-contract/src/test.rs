@@ -2152,6 +2152,76 @@ fn test_get_subscription_not_found_fails() {
     );
 }
 
+// ── Subscription pagination tests ─────────────────────────────────────────────
+
+/// Registers a merchant and creates `count` subscriptions with ids SUB_000..,
+/// returning the merchant address and the token used for the plans.
+fn setup_subscriptions(
+    env: &Env,
+    client: &PaymentContractClient,
+    count: u32,
+) -> (Address, Address) {
+    let admin = Address::generate(env);
+    let merchant = Address::generate(env);
+    let token = create_token(env, &admin);
+    client.set_admin(&admins(env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(env, "Store"),
+        &str(env, "desc"),
+        &str(env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    for i in 0..count {
+        let payer = Address::generate(env);
+        let sub_id = Bytes::from_slice(env, alloc::format!("SUB_{:03}", i).as_bytes());
+        client.create_subscription(&payer, &merchant, &sub_id, &make_plan(env, &token));
+    }
+    (merchant, token)
+}
+
+#[test]
+fn test_subscription_pagination_basic() {
+    let (env, client) = setup();
+    let (merchant, _token) = setup_subscriptions(&env, &client, 3);
+
+    let page = client.get_subscription_page(&merchant, &None, &2);
+    assert_eq!(page.records.len(), 2);
+    assert_eq!(page.total, 3);
+    assert_eq!(page.records.get(0).unwrap().subscription_id, bytes(&env, "SUB_000"));
+    assert_eq!(page.records.get(1).unwrap().subscription_id, bytes(&env, "SUB_001"));
+    assert!(page.next_cursor.is_some(), "first page must return a cursor");
+}
+
+#[test]
+fn test_subscription_pagination_next_page() {
+    let (env, client) = setup();
+    let (merchant, _token) = setup_subscriptions(&env, &client, 3);
+
+    let page1 = client.get_subscription_page(&merchant, &None, &2);
+    assert_eq!(page1.records.len(), 2);
+    let cursor = page1.next_cursor.clone().expect("first page must return a cursor");
+
+    let page2 = client.get_subscription_page(&merchant, &Some(cursor), &2);
+    assert_eq!(page2.records.len(), 1);
+    assert_eq!(page2.total, 3);
+    // Second page must start after the cursor, i.e. contain the remaining record.
+    assert_eq!(page2.records.get(0).unwrap().subscription_id, bytes(&env, "SUB_002"));
+    assert!(page2.next_cursor.is_none(), "last page must not return a cursor");
+}
+
+#[test]
+fn test_subscription_pagination_empty() {
+    let (env, client) = setup();
+    let (merchant, _token) = setup_subscriptions(&env, &client, 0);
+
+    let page = client.get_subscription_page(&merchant, &None, &10);
+    assert_eq!(page.records.len(), 0);
+    assert_eq!(page.total, 0);
+    assert!(page.next_cursor.is_none(), "empty page must not return a cursor");
+}
+
 // ── T-020: inactive merchant payment ─────────────────────────────────────────
 
 #[test]
