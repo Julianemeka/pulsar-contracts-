@@ -133,6 +133,75 @@ cargo install cargo-tarpaulin
 cargo tarpaulin --out Html --output-dir coverage
 ```
 
+### Load Testing (Concurrent Payments)
+
+The contract must behave correctly under concurrent payment submissions. A load
+test submits many payments in parallel and verifies that the global payment
+index and `GlobalStats.total_payments` stay consistent.
+
+#### Prerequisites
+
+- A deployed contract on **testnet** (see [Common Tasks](#deploy-contract))
+- A funded admin account secret on testnet
+- Node.js 18+ (for the `@stellar/stellar-sdk` script) or the Stellar CLI
+
+#### Required Environment Variables
+
+| Variable        | Description                                              |
+| --------------- | -------------------------------------------------------- |
+| `CONTRACT_ID`   | Deployed contract ID (`C...`)                            |
+| `ADMIN_SECRET`  | Secret key (`S...`) of the funded admin/payer account    |
+| `NETWORK`       | Network to target, e.g. `testnet`                        |
+| `CONCURRENCY`   | Number of concurrent payments to submit (default `100`)  |
+
+#### Run the Load Test
+
+```bash
+export CONTRACT_ID="<testnet_contract_id>"
+export ADMIN_SECRET="<funded_testnet_secret>"
+export NETWORK="testnet"
+export CONCURRENCY=100
+
+# Shell wrapper (invokes the Node script)
+bash scripts/load-test.sh
+
+# Or run the Node script directly
+node scripts/load-test.js
+```
+
+#### Interpreting Results
+
+- **Every transaction must either succeed or fail with an expected contract
+  error** (e.g. duplicate order ID, expired order, insufficient balance). A
+  panic, trap, or unexpected host error indicates a bug and the test fails.
+- The script prints a summary of successes, expected failures, and unexpected
+  failures. Any unexpected failure is reported with the transaction hash and
+  error for triage.
+
+#### Verifying `GlobalStats.total_payments`
+
+After the run, query the global stats and confirm `total_payments` equals the
+number of successful payments reported by the load test:
+
+```bash
+stellar contract invoke --id $CONTRACT_ID --source-account admin --network testnet \
+  -- get_global_payment_stats --admins '["<ADMIN_ADDRESS>"]' --date_start null --date_end null
+```
+
+The `total_payments` field must match the success count from the load test
+summary. A mismatch means the global index or stats increment is not
+concurrency-safe.
+
+#### Manual CI Step
+
+The load test is **not** run on every push (it targets testnet and consumes
+funds). It is exposed as a manual `workflow_dispatch` CI job. Trigger it from
+the GitHub Actions tab (**Run workflow**) or via the CLI:
+
+```bash
+gh workflow run load-test.yml -f concurrency=100
+```
+
 ## Local Network
 
 ### Start Local Network

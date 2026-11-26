@@ -4,7 +4,9 @@ import { errorMiddleware } from "./middleware/errors.js";
 import merchantsRouter from "./routes/merchants.js";
 import paymentsRouter from "./routes/payments.js";
 
-const app = express();
+export function buildCorsOptions(env = process.env) {
+  const nodeEnv = env.NODE_ENV || "development";
+  const isProduction = nodeEnv === "production";
 
 // Attach a request ID to every request for inclusion in error responses.
 app.use((req, res, next) => {
@@ -15,9 +17,13 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 
-app.get("/health", (_req, res) => res.json({ status: "ok" }));
-app.use("/api/merchants", merchantsRouter);
-app.use("/api/payments", paymentsRouter);
+  if (!isProduction) {
+    // Development: allow all origins.
+    return {
+      origin: true,
+      credentials: true,
+    };
+  }
 
 // 404 handler for unmatched routes, using the standard error format.
 app.use((req, res, next) => {

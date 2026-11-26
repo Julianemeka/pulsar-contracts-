@@ -1,4 +1,5 @@
 import express from "express";
+import cors from "cors";
 import { createRouter } from "./api";
 import { startListener } from "./listener";
 import { initStore } from "./store";

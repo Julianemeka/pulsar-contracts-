@@ -325,6 +325,6 @@ Notes for production:
   WASM byte-for-byte to verify what was deployed.
 - [`docs/security-audit.md`](security-audit.md) — audit status and scope.
 - [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) — the
-  `deploy-testnet` job this guide's mainnet flow mirrors (testnet deploys
-  are automated in CI; mainnet deploys are intentionally manual and
-  checklist-gated).
+  `deploy-staging` (Futurenet) and `deploy-testnet` jobs this guide's
+  mainnet flow mirrors (staging and testnet deploys are automated in CI;
+  mainnet deploys are intentionally manual and checklist-gated).

@@ -769,6 +769,34 @@ fn test_payment_expired_fails() {
     );
 }
 
+/// T-031: ADR 0004 documents that `expires_at = 0` means "never expires".
+/// A payment with `expires_at = 0` must be accepted regardless of ledger time.
+#[test]
+fn test_payment_with_no_expiry() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let token = create_token(&env, &admin);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(&merchant, &str(&env, "Store"), &str(&env, "desc"), &str(&env, "c@c.com"), &MerchantCategory::Retail, &None);
+    mint(&env, &token, &payer, 5000);
+
+    // Advance ledger time significantly before processing the payment.
+    env.ledger().with_mut(|l| l.timestamp = 10_000_000);
+
+    let mut order = make_order(&env, &merchant, &payer, &token);
+    order.expires_at = 0;
+    let (_pk, sig) = sign_order(&env, &order);
+
+    // Payment must be accepted: expires_at = 0 means "never expires".
+    client.process_payment_with_signature(&payer, &order, &sig, &zero_key(&env));
+
+    let record = client.get_payment_by_id(&payer, &bytes(&env, "ORDER_001"));
+    assert_eq!(record.amount, 1000);
+    assert_eq!(record.status, PaymentStatus::Completed);
+}
+
 // ── SC-014: validate_order_id charset and length tests ────────────────────────
 
 /// Helper to attempt a payment with an arbitrary order_id bytes value.
