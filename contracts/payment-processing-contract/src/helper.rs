@@ -12,6 +12,10 @@ use crate::types::{PaymentFilter, PaymentRecord, PaymentStatus, StatusFilter};
 /// [`crate::types::PaymentOrder`] `metadata` map (MISC-013).
 pub const MAX_METADATA_SIZE_BYTES: u32 = 1024;
 
+/// Maximum length, in bytes, of a payment order or payment record
+/// `description` (SC-047).
+pub const MAX_DESCRIPTION_LEN: u32 = 256;
+
 /// Require that `caller` is the contract admin.
 pub fn require_admin(env: &Env, caller: &Address) -> Result<(), PaymentError> {
     caller.require_auth();
@@ -71,6 +75,19 @@ pub fn require_merchant(
 pub fn validate_amount(amount: i128) -> Result<(), PaymentError> {
     if amount <= 0 {
         return Err(PaymentError::InvalidAmount);
+    }
+    Ok(())
+}
+
+/// Validate that a payment `description` does not exceed
+/// [`MAX_DESCRIPTION_LEN`] bytes (SC-047).
+///
+/// # Errors
+/// Returns [`PaymentError::InvalidInput`] when the description is longer than
+/// [`MAX_DESCRIPTION_LEN`] bytes.
+pub fn validate_description(description: &String) -> Result<(), PaymentError> {
+    if description.len() > MAX_DESCRIPTION_LEN {
+        return Err(PaymentError::InvalidInput);
     }
     Ok(())
 }
