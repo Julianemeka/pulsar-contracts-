@@ -1598,7 +1598,7 @@ fn test_payer_history_filter_date_range() {
     let o2 = PaymentOrder { order_id: bytes(&env, "D_002"), merchant_address: merchant.clone(), payer: payer.clone(), token: token.clone(), amount: 200, description: str(&env, "d"), expires_at: 0 };
     let (_pk2, sig2) = sign_order(&env, &o2);
     client.process_payment_with_signature(&payer, &o2, &sig2, &zero_key(&env));
-    let filter = PaymentFilter { date_start: Some(500), date_end: Some(2000), amount_min: None, amount_max: None, token: None, status: StatusFilter::Any };
+    let filter = PaymentFilter { date_start: Some(500), date_end: Some(2000), amount_min: None, amount_max: None, tokens: None, status: StatusFilter::Any };
     let page = client.get_payer_payment_history(&payer, &None, &10, &Some(filter), &SortField::Date, &SortOrder::Ascending);
     assert_eq!(page.total, 1);
     assert_eq!(page.records.get(0).unwrap().amount, 100);
@@ -1608,7 +1608,7 @@ fn test_payer_history_filter_date_range() {
 fn test_payer_history_filter_amount_range() {
     let (env, client) = setup();
     let (_admin, _merchant, payer, _token) = setup_payer_history(&env, &client, &[50, 150, 500]);
-    let filter = PaymentFilter { date_start: None, date_end: None, amount_min: Some(100), amount_max: Some(200), token: None, status: StatusFilter::Any };
+    let filter = PaymentFilter { date_start: None, date_end: None, amount_min: Some(100), amount_max: Some(200), tokens: None, status: StatusFilter::Any };
     let page = client.get_payer_payment_history(&payer, &None, &10, &Some(filter), &SortField::Amount, &SortOrder::Ascending);
     assert_eq!(page.total, 1);
     assert_eq!(page.records.get(0).unwrap().amount, 150);
@@ -2659,6 +2659,136 @@ fn test_process_subscription_payment_after_interval() {
     );
     assert_eq!(page.total, 1);
     assert_eq!(page.records.get(0).unwrap().token, token2);
+}
+
+/// MISC-003: filtering by a single token must return only payments in that token.
+#[test]
+fn test_payer_history_filter_single_token() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let token_a = create_token(&env, &admin);
+    let token_b = create_token(&env, &admin);
+
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    mint(&env, &token_a, &payer, 5000);
+    mint(&env, &token_b, &payer, 5000);
+
+    let order_a = PaymentOrder {
+        order_id: bytes(&env, "TOK_A"),
+        merchant_address: merchant.clone(),
+        payer: payer.clone(),
+        token: token_a.clone(),
+        amount: 100,
+        description: str(&env, "token a"),
+        expires_at: 0,
+    };
+    let (_pk, sig) = sign_order(&env, &order_a);
+    client.process_payment_with_signature(&payer, &order_a, &sig, &zero_key(&env));
+
+    let order_b = PaymentOrder {
+        order_id: bytes(&env, "TOK_B"),
+        merchant_address: merchant.clone(),
+        payer: payer.clone(),
+        token: token_b.clone(),
+        amount: 200,
+        description: str(&env, "token b"),
+        expires_at: 0,
+    };
+    let (_pk2, sig2) = sign_order(&env, &order_b);
+    client.process_payment_with_signature(&payer, &order_b, &sig2, &zero_key(&env));
+
+    let filter = PaymentFilter {
+        date_start: None,
+        date_end: None,
+        amount_min: None,
+        amount_max: None,
+        tokens: Some(Vec::from_array(&env, [token_a.clone()])),
+        status: StatusFilter::Any,
+    };
+    let page = client.get_payer_payment_history(
+        &payer,
+        &None,
+        &10,
+        &Some(filter),
+        &SortField::Date,
+        &SortOrder::Ascending,
+    );
+    assert_eq!(page.total, 1);
+    assert_eq!(page.records.get(0).unwrap().token, token_a);
+    assert_eq!(page.records.get(0).unwrap().order_id, bytes(&env, "TOK_A"));
+}
+
+/// MISC-003: filtering by multiple tokens must return payments in any of them.
+#[test]
+fn test_payer_history_filter_multiple_tokens() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let token_a = create_token(&env, &admin);
+    let token_b = create_token(&env, &admin);
+    let token_c = create_token(&env, &admin);
+
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(
+        &merchant,
+        &str(&env, "Store"),
+        &str(&env, "desc"),
+        &str(&env, "c@c.com"),
+        &MerchantCategory::Retail,
+        &None,
+    );
+    mint(&env, &token_a, &payer, 5000);
+    mint(&env, &token_b, &payer, 5000);
+    mint(&env, &token_c, &payer, 5000);
+
+    for (id, token, amount) in [
+        ("MULTI_A", token_a.clone(), 100i128),
+        ("MULTI_B", token_b.clone(), 200),
+        ("MULTI_C", token_c.clone(), 300),
+    ] {
+        let order = PaymentOrder {
+            order_id: bytes(&env, id),
+            merchant_address: merchant.clone(),
+            payer: payer.clone(),
+            token: token.clone(),
+            amount,
+            description: str(&env, "multi"),
+            expires_at: 0,
+        };
+        let (_pk, sig) = sign_order(&env, &order);
+        client.process_payment_with_signature(&payer, &order, &sig, &zero_key(&env));
+    }
+
+    let filter = PaymentFilter {
+        date_start: None,
+        date_end: None,
+        amount_min: None,
+        amount_max: None,
+        tokens: Some(Vec::from_array(&env, [token_a.clone(), token_b.clone()])),
+        status: StatusFilter::Any,
+    };
+    let page = client.get_payer_payment_history(
+        &payer,
+        &None,
+        &10,
+        &Some(filter),
+        &SortField::Date,
+        &SortOrder::Ascending,
+    );
+    assert_eq!(page.total, 2);
+    assert_eq!(page.records.get(0).unwrap().token, token_a);
+    assert_eq!(page.records.get(1).unwrap().token, token_b);
 }
 
 #[test]
