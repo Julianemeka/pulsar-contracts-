@@ -1,63 +1,56 @@
-import { Pool } from 'pg';
-import { createAnalyticsRouter } from './api';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import request from 'supertest';
+import { createApp } from './api';
 
-jest.mock('pg', () => {
-  const mPool = jest.fn().mockImplementation(() => ({
-    query: jest.fn(),
-    end: jest.fn(),
-  }));
-  return { Pool: mPool };
-});
-
-const MockedPool = Pool as unknown as jest.Mock;
-
-describe('createAnalyticsRouter pool configuration', () => {
-  const originalEnv = process.env;
+describe('analytics API authentication', () => {
+  const validKey = 'test-analytics-key';
+  let app: ReturnType<typeof createApp>;
 
   beforeEach(() => {
-    jest.clearAllMocks();
-    process.env = { ...originalEnv };
+    process.env.ANALYTICS_API_KEYS = validKey;
+    app = createApp();
   });
 
-  afterAll(() => {
-    process.env = originalEnv;
+  afterEach(() => {
+    delete process.env.ANALYTICS_API_KEYS;
   });
 
-  it('applies pool config from ANALYTICS_DB_* environment variables', () => {
-    process.env.DATABASE_URL = 'postgres://user:pass@localhost:5432/analytics';
-    process.env.ANALYTICS_DB_POOL_MAX = '25';
-    process.env.ANALYTICS_DB_IDLE_TIMEOUT_MS = '15000';
-    process.env.ANALYTICS_DB_CONNECTION_TIMEOUT_MS = '7500';
-
-    createAnalyticsRouter();
-
-    expect(MockedPool).toHaveBeenCalledTimes(1);
-    expect(MockedPool).toHaveBeenCalledWith(
-      expect.objectContaining({
-        connectionString: 'postgres://user:pass@localhost:5432/analytics',
-        max: 25,
-        idleTimeoutMillis: 15000,
-        connectionTimeoutMillis: 7500,
-      }),
-    );
+  it('returns 401 when no Authorization header is provided', async () => {
+    const res = await request(app).get('/analytics/revenue');
+    expect(res.status).toBe(401);
   });
 
-  it('applies default pool config when ANALYTICS_DB_* variables are unset', () => {
-    process.env.DATABASE_URL = 'postgres://user:pass@localhost:5432/analytics';
-    delete process.env.ANALYTICS_DB_POOL_MAX;
-    delete process.env.ANALYTICS_DB_IDLE_TIMEOUT_MS;
-    delete process.env.ANALYTICS_DB_CONNECTION_TIMEOUT_MS;
+  it('returns 401 when the Authorization header is not a Bearer token', async () => {
+    const res = await request(app)
+      .get('/analytics/revenue')
+      .set('Authorization', 'Basic abc123');
+    expect(res.status).toBe(401);
+  });
 
-    createAnalyticsRouter();
+  it('returns 403 when the API key is invalid', async () => {
+    const res = await request(app)
+      .get('/analytics/revenue')
+      .set('Authorization', 'Bearer wrong-key');
+    expect(res.status).toBe(403);
+  });
 
-    expect(MockedPool).toHaveBeenCalledTimes(1);
-    expect(MockedPool).toHaveBeenCalledWith(
-      expect.objectContaining({
-        connectionString: 'postgres://user:pass@localhost:5432/analytics',
-        max: 10,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 5000,
-      }),
-    );
+  it('allows access with a valid API key', async () => {
+    const res = await request(app)
+      .get('/analytics/revenue')
+      .set('Authorization', `Bearer ${validKey}`);
+    expect(res.status).toBe(200);
+  });
+
+  it('protects every analytics route', async () => {
+    const routes = ['/analytics/revenue', '/analytics/top-merchants', '/analytics/customer-segments'];
+    for (const route of routes) {
+      const unauth = await request(app).get(route);
+      expect(unauth.status).toBe(401);
+
+      const auth = await request(app)
+        .get(route)
+        .set('Authorization', `Bearer ${validKey}`);
+      expect(auth.status).toBe(200);
+    }
   });
 });
