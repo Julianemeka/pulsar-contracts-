@@ -180,7 +180,15 @@ export function requireApiKey(validKeys: Set<string>) {
 
 export function createAnalyticsRouter(databaseUrl: string): express.Router {
   const router = express.Router();
-  const db = new Pool({ connectionString: databaseUrl });
+  const poolConfig = {
+    max: intFromEnv("ANALYTICS_DB_POOL_MAX", 10),
+    idleTimeoutMillis: intFromEnv("ANALYTICS_DB_IDLE_TIMEOUT_MS", 30000),
+    connectionTimeoutMillis: intFromEnv("ANALYTICS_DB_CONNECTION_TIMEOUT_MS", 5000),
+  };
+  console.log(
+    `[analytics-service] DB pool config: max=${poolConfig.max}, idleTimeoutMillis=${poolConfig.idleTimeoutMillis}, connectionTimeoutMillis=${poolConfig.connectionTimeoutMillis}`
+  );
+  const db = new Pool({ connectionString: databaseUrl, ...poolConfig });
   const cache = new AnalyticsCache(cacheTtlFromEnv());
 
   // Require a valid API key on all analytics routes.
