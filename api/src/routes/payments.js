@@ -39,10 +39,20 @@ function res_getRequestId(req) {
 
 /**
  * POST /api/payments
+ * Headers: { Idempotency-Key }
  * Body: { payer, order: { order_id, merchant_address, payer, token, amount, description, expires_at }, signature }
  */
 router.post("/", paymentsLimiter, async (req, res, next) => {
   try {
+    const idempotencyKey = req.get("Idempotency-Key");
+
+    if (idempotencyKey) {
+      const cached = getCachedResponse(idempotencyKey);
+      if (cached) {
+        return res.status(cached.status).json({ ...cached.body, idempotent: true });
+      }
+    }
+
     const { payer, order, signature } = req.body;
     if (!payer || !order || !signature) {
       throw new ApiError(422, "InvalidInput", "Missing required fields");

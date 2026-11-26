@@ -33,7 +33,7 @@ use proptest::prelude::*;
 use alloc::vec::Vec;
 
 use crate::error::PaymentError;
-use crate::helper::{matches_filter, validate_amount};
+use crate::helper::{matches_filter, validate_amount, validate_metadata_size, MAX_METADATA_SIZE_BYTES};
 use crate::types::{PaymentFilter, PaymentRecord, PaymentStatus, StatusFilter};
 
 use crate::{DataKey, PaymentProcessingContract, PaymentProcessingContractClient};

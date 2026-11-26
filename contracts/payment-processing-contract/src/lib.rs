@@ -955,6 +955,7 @@ impl PaymentContract {
         helper::validate_order_id(&order.order_id)?;
         helper::validate_description(&order.description)?;
         helper::validate_metadata(&order.metadata)?;
+        helper::validate_metadata_size(&order.metadata)?;
         if storage::get_payment(&env, &order.order_id).is_some() {
             return Err(PaymentError::PaymentAlreadyExists);
         }

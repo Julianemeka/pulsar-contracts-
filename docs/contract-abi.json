@@ -207,7 +207,7 @@
     },
     {
       "name": "initiate_multisig_payment",
-      "doc": "Creates a multisig payment that requires all listed signers to sign before execution.",
+      "doc": "Creates a multisig payment that requires all listed signers to sign before execution. PaymentOrder.metadata is capped at MAX_METADATA_SIZE_BYTES (1024 bytes, combined keys and values); exceeding the limit returns InvalidInput.",
       "inputs": [
         { "name": "initiator",         "type": "Address" },
         { "name": "payment_id",        "type": "Bytes" },
