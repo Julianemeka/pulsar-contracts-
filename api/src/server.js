@@ -1,6 +1,7 @@
 import express from "express";
 import { randomUUID } from "crypto";
 import { errorMiddleware } from "./middleware/errors.js";
+import { auditMiddleware } from "./middleware/audit.js";
 import merchantsRouter from "./routes/merchants.js";
 import paymentsRouter from "./routes/payments.js";
 
