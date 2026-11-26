@@ -92,42 +92,16 @@ List merchant payment history with filtering/pagination.
 Query parameters:
 - `merchant` (required): Merchant address
 - `cursor` (optional): Pagination cursor
-- `limit` (optional): Max results (default 10, max 100)
+- `limit` (optional): Max results (default 10). Capped at `MAX_PAGE_SIZE` (default 100). If `limit` exceeds the cap, the request is rejected with HTTP 422.
 - `date_start`, `date_end` (optional): Unix timestamp range
 - `amount_min`, `amount_max` (optional): Amount range
 - `status` (optional): "Any", "Completed", "PartiallyRefunded", "FullyRefunded"
 - `sort_field` (optional): "Date" or "Amount"
 - `sort_order` (optional): "Ascending" or "Descending"
 
-## Audit Logging
+## Request Body Size Limit
 
-All admin-equivalent API calls are recorded in a structured, append-only audit log for
-post-incident forensics. Each entry captures:
-
-- Timestamp (ISO 8601)
-- Caller IP address
-- Endpoint (path)
-- HTTP method
-- Response status code
-- Wallet address(es) involved in the request (e.g. `merchant_address`, `payer`, `caller`)
-
-Entries are written append-only to a dedicated log file. The file path is configurable via
-the `AUDIT_LOG_PATH` environment variable (defaults to `api/logs/audit.log`).
-
-```bash
-export AUDIT_LOG_PATH=/var/log/pulsar/audit.log
-```
-
-### Retention Policy
-
-Audit log entries are retained for **90 days**. After this period, entries should be
-archived or purged according to your organization's data-retention policy. Operators are
-responsible for rotating and pruning the audit log file on this schedule.
-
-### PII Notice
-
-Wallet addresses recorded in the audit log are treated as business-critical PII. Access to
-the audit log file must be restricted to authorized personnel only.
+JSON request bodies are limited to **64kb**. Requests with a larger body are rejected with HTTP 413 (Payload Too Large).
 
 ## Error Responses
 
@@ -146,5 +120,6 @@ HTTP status codes map to contract errors:
 - 403: Unauthorized
 - 404: Resource not found (Merchant/Payment/Refund/Multisig)
 - 409: Resource conflict (AlreadyExists, AlreadyCompleted)
-- 422: Invalid input or state (InvalidAmount, PaymentExpired, RefundWindowExpired, etc.)
+- 413: Request body exceeds the 64kb limit
+- 422: Invalid input or state (InvalidAmount, PaymentExpired, RefundWindowExpired, `limit` exceeding `MAX_PAGE_SIZE`, etc.)
 - 500: Internal server error
