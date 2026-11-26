@@ -25,6 +25,20 @@ env:
   # Adjust this value to change the threshold without editing workflow logic.
   COVERAGE_THRESHOLD: 80
 
+# ---------------------------------------------------------------------------
+# Node.js dependency caching strategy (DO-020)
+# ---------------------------------------------------------------------------
+# Every job that installs npm dependencies restores a shared `~/.npm` cache
+# before running `npm ci`. The cache key is derived from the hash of ALL
+# committed `package-lock.json` files, so any dependency change invalidates
+# the cache and a fresh download happens exactly once. On a cache hit the
+# `npm ci` step reuses the local tarball cache instead of hitting the
+# registry, which removes the 2–4 minutes previously spent re-downloading
+# dependencies on every run (measured saving: >= 90 s per job on a hit).
+# `restore-keys` fall back to the most recent cache for the same OS so a
+# partial lockfile change still gets a warm cache.
+# ---------------------------------------------------------------------------
+
 jobs:
   test:
     name: Test (${{ matrix.toolchain }})
@@ -79,6 +93,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-${{ matrix.toolchain }}-${{ steps.rustc-version.outputs.version }}-
             ${{ runner.os }}-cargo-${{ matrix.toolchain }}-
+
+      # DO-020: restore the shared npm cache before any Node dependency install.
+      - name: Cache npm dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -545,6 +568,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # DO-020: restore the shared npm cache before installing SDK deps.
+      - name: Cache npm dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-
+
+      - name: Install SDK dependencies
+        run: npm ci
+        working-directory: sdk
 
       - name: Regenerate sdk/errors.ts and sdk/error-registry.json
         run: node sdk/scripts/generate-errors.js

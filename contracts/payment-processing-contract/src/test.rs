@@ -2887,6 +2887,41 @@ fn test_process_subscription_payment_before_interval_fails() {
     );
 }
 
+/// SC-036: Calling `process_subscription_payment` twice within the same
+/// interval must be rejected on the second call with
+/// `SubscriptionIntervalNotElapsed`, and the rejected call must not update
+/// `last_charged_at`.
+#[test]
+fn test_subscription_double_charge_rejected() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let merchant = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let token = create_token(&env, &admin);
+    client.set_admin(&admins(&env, &admin), &1);
+    client.register_merchant(&merchant, &str(&env, "Store"), &str(&env, "desc"), &str(&env, "c@c.com"), &MerchantCategory::Retail, &None);
+    mint(&env, &token, &payer, 5000);
+
+    let sub_id = bytes(&env, "SUB_DOUBLE");
+    client.create_subscription(&payer, &merchant, &sub_id, &make_plan(&env, &token));
+
+    // First charge succeeds.
+    env.ledger().with_mut(|l| l.timestamp = 1000);
+    client.process_subscription_payment(&payer, &sub_id);
+
+    let charged_at = client.get_subscription(&sub_id).last_charged_at;
+    assert_eq!(charged_at, 1000);
+
+    // Second charge within the same interval (same ledger timestamp) is rejected.
+    assert_eq!(
+        client.try_process_subscription_payment(&payer, &sub_id),
+        Err(Ok(PaymentError::SubscriptionIntervalNotElapsed))
+    );
+
+    // The rejected call must not have updated last_charged_at.
+    assert_eq!(client.get_subscription(&sub_id).last_charged_at, charged_at);
+}
+
 #[test]
 fn test_process_subscription_payment_cancelled_fails() {
     let (env, client) = setup();

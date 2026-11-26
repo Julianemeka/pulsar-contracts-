@@ -816,6 +816,17 @@ impl PaymentContract {
         }
         merchant.active = true;
         storage::save_merchant(&env, &merchant);
+        // ── Stats policy on reactivation (SC-044) ────────────────────────────
+        // Decision: PRESERVE historical `MerchantStats` across deactivation
+        // periods and record an activation-period marker instead of resetting.
+        // Resetting would destroy auditable history and break refunds/reports
+        // that reference payments made before deactivation. Instead we stamp
+        // `stats_period_start` with the reactivation timestamp so integrators
+        // can compute per-activation-period stats by filtering on `paid_at`.
+        // See docs/adr/ for the full ADR entry.
+        let mut stats = storage::get_merchant_stats(&env, &merchant_address);
+        stats.stats_period_start = env.ledger().timestamp();
+        storage::save_merchant_stats(&env, &stats);
         env.events().publish(
             (String::from_str(&env, "merchant_reactivated"),),
             merchant_address,
