@@ -15,6 +15,47 @@ const MAX_ATTEMPTS = 5;
 const BASE_DELAY_MS = 1_000;
 
 /**
+ * Validate that a webhook target URL uses a secure scheme.
+ *
+ * Plain `http:` URLs leak payment event data in transit, so they are rejected
+ * by default.  Insecure delivery is only permitted when either:
+ *   - `NODE_ENV=development` (local development convenience), or
+ *   - `ALLOW_INSECURE_WEBHOOKS=true` is explicitly set (a warning is logged).
+ *
+ * Throws a configuration-level error for any other scheme (including `http:`
+ * when insecure delivery is not permitted).
+ */
+export function assertSecureUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(
+      `[webhook] Invalid webhook URL "${url}": not a valid absolute URL`,
+    );
+  }
+
+  if (parsed.protocol === "https:") return;
+
+  const isDevelopment = process.env.NODE_ENV === "development";
+  const allowInsecure = process.env.ALLOW_INSECURE_WEBHOOKS === "true";
+
+  if (parsed.protocol === "http:" && (isDevelopment || allowInsecure)) {
+    if (allowInsecure) {
+      console.warn(
+        `[webhook] WARNING: ALLOW_INSECURE_WEBHOOKS is enabled — delivering to insecure URL ${url}. Payment event data will be sent over plain HTTP.`,
+      );
+    }
+    return;
+  }
+
+  throw new Error(
+    `[webhook] Insecure webhook URL rejected: "${url}" uses scheme "${parsed.protocol}". ` +
+      `Only "https:" is allowed. Set ALLOW_INSECURE_WEBHOOKS=true to override (not recommended).`,
+  );
+}
+
+/**
  * Attempt to deliver `payload` to `url` with exponential-backoff retries.
  *
  * If all attempts are exhausted, the delivery is moved to the Dead Letter
@@ -28,18 +69,19 @@ const BASE_DELAY_MS = 1_000;
 export async function deliver(
   url: string,
   payload: WebhookPayload,
+  requestId?: string,
 ): Promise<void> {
+  // Reject insecure targets before any delivery attempt is made.
+  assertSecureUrl(url);
+
   const body = JSON.stringify(payload);
   const firstAttemptAt = new Date().toISOString();
   let lastError = "unknown error";
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      const result = await postOnce(url, body);
-      if (result.statusCode >= 200 && result.statusCode < 300) {
-        return; // success — nothing to DLQ
-      }
-      throw new Error(`HTTP ${result.statusCode}`);
+      await post(url, body, requestId);
+      return; // success — nothing to DLQ
     } catch (err) {
       lastError = err instanceof Error ? err.message : String(err);
 
@@ -60,32 +102,32 @@ export async function deliver(
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
-export interface PostResult {
-  statusCode: number;
-  body: string;
-}
-
-/**
- * Perform a single POST attempt to `url` and resolve with the target's HTTP
- * status code and response body text.  Unlike the retrying `deliver` path,
- * this does not reject on non-2xx responses — callers (e.g. the webhook test
- * endpoint) need the raw status/body to report back to the merchant.
- */
-export function postOnce(url: string, body: string): Promise<PostResult> {
+function post(url: string, body: string, requestId?: string): Promise<void> {
   return new Promise((resolve, reject) => {
+    // Guard again so no plain-HTTP request can ever be issued.
+    try {
+      assertSecureUrl(url);
+    } catch (err) {
+      reject(err);
+      return;
+    }
     const parsed = new URL(url);
     const lib = parsed.protocol === "https:" ? https : http;
+    const headers: Record<string, string | number> = {
+      "Content-Type": "application/json",
+      "Content-Length": Buffer.byteLength(body),
+      "User-Agent": "pulsar-webhook/0.1",
+    };
+    if (requestId) {
+      headers["X-Request-ID"] = requestId;
+    }
     const req = lib.request(
       {
         hostname: parsed.hostname,
         port: parsed.port,
         path: parsed.pathname + parsed.search,
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(body),
-          "User-Agent": "pulsar-webhook/0.1",
-        },
+        headers,
       },
       (res) => {
         const chunks: Buffer[] = [];
@@ -106,3 +148,62 @@ export function postOnce(url: string, body: string): Promise<PostResult> {
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+const REACHABILITY_TIMEOUT_MS = 5_000;
+
+/**
+ * Check whether `url` is reachable before confirming a webhook registration.
+ *
+ * Sends a lightweight HEAD request (falling back to GET if the target
+ * rejects HEAD) with a short timeout. Returns true if the endpoint responds
+ * with any HTTP status (even 4xx/5xx — we only care that something is
+ * listening), false if the connection fails, times out, or the host cannot
+ * be resolved.
+ */
+export function checkReachable(url: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      resolve(false);
+      return;
+    }
+
+    const lib = parsed.protocol === "https:" ? https : http;
+    const attempt = (method: "HEAD" | "GET") => {
+      const req = lib.request(
+        {
+          hostname: parsed.hostname,
+          port: parsed.port,
+          path: parsed.pathname + parsed.search,
+          method,
+          timeout: REACHABILITY_TIMEOUT_MS,
+          headers: { "User-Agent": "pulsar-webhook/0.1" },
+        },
+        (res) => {
+          res.resume();
+          if (method === "HEAD" && res.statusCode && res.statusCode >= 400 && res.statusCode < 500) {
+            // Some servers don't support HEAD — retry with GET before giving up.
+            attempt("GET");
+            return;
+          }
+          resolve(true);
+        },
+      );
+      req.on("timeout", () => {
+        req.destroy();
+        resolve(false);
+      });
+      req.on("error", () => {
+        if (method === "HEAD") {
+          attempt("GET");
+        } else {
+          resolve(false);
+        }
+      });
+      req.end();
+    };
+    attempt("HEAD");
+  });
+}
