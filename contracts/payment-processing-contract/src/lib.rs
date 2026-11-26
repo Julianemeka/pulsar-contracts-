@@ -770,15 +770,43 @@ impl PaymentContract {
                 return Err(PaymentError::Unauthorized);
             }
         }
-        let mut merchant =
-            storage::get_merchant(&env, &merchant_address).ok_or(PaymentError::MerchantNotFound)?;
-        merchant.active = false;
-        storage::save_merchant(&env, &merchant);
-        env.events().publish(
-            (String::from_str(&env, "merchant_deactivated"),),
-            (merchant_address, caller),
-        );
-        Ok(())
+        Self::deactivate_merchant_internal(&env, &merchant_address, &caller)
+    }
+
+    /// Deactivate the caller's own merchant account (MISC-035).
+    ///
+    /// Self-service offboarding: a merchant can close their account without
+    /// waiting for an admin to act. The merchant must authenticate the call
+    /// and can only deactivate their own account — the address passed as
+    /// `merchant_address` is the authenticated caller, so no cross-merchant
+    /// deactivation is possible.
+    ///
+    /// Deactivation marks the merchant inactive (blocking new payments,
+    /// subscriptions, and multi-sig initiations) and cancels every currently
+    /// `Active` subscription belonging to the merchant. Cancelled
+    /// subscriptions can no longer be charged. Existing payment history and
+    /// refunds are preserved.
+    ///
+    /// # Parameters
+    /// - `merchant_address` — The merchant deactivating their own account;
+    ///   must be authenticated.
+    ///
+    /// # Events
+    /// Emits `merchant_deactivated` with payload
+    /// `(merchant_address, merchant_address)`.
+    ///
+    /// # Errors
+    /// - [`PaymentError::ContractPaused`] if the contract is paused.
+    /// - [`PaymentError::MerchantNotFound`] if no merchant is registered at
+    ///   `merchant_address`.
+    pub fn self_deactivate_merchant(
+        env: Env,
+        merchant_address: Address,
+    ) -> Result<(), PaymentError> {
+        storage::bump_instance_ttl(&env);
+        if storage::is_paused(&env) { return Err(PaymentError::ContractPaused); }
+        merchant_address.require_auth();
+        Self::deactivate_merchant_internal(&env, &merchant_address, &merchant_address)
     }
 
     /// Reactivate a previously deactivated merchant.

@@ -253,6 +253,81 @@ export function createRouter(rpcUrl: string, contractId: string): express.Router
     res.status(204).end();
   });
 
+  // ── Webhook test endpoint ──────────────────────────────────────────────────
+  //
+  // Per-merchant sliding-window rate limit: 5 test deliveries per 60 seconds.
+  const TEST_RATE_LIMIT = 5;
+  const TEST_RATE_WINDOW_MS = 60_000;
+  const testCallTimestamps = new Map<string, number[]>();
+
+  function isTestRateLimited(merchantAddress: string): boolean {
+    const now = Date.now();
+    const cutoff = now - TEST_RATE_WINDOW_MS;
+    const recent = (testCallTimestamps.get(merchantAddress) ?? []).filter(
+      (ts) => ts > cutoff,
+    );
+    if (recent.length >= TEST_RATE_LIMIT) {
+      testCallTimestamps.set(merchantAddress, recent);
+      return true;
+    }
+    recent.push(now);
+    testCallTimestamps.set(merchantAddress, recent);
+    return false;
+  }
+
+  // POST /webhooks/test — deliver a synthetic webhook_test event to the
+  // merchant's registered URL and report the target's response.
+  router.post("/webhooks/test", async (req, res) => {
+    const { merchantAddress } = req.body as { merchantAddress?: string };
+    if (!merchantAddress) {
+      res.status(400).json({ error: "merchantAddress is required" });
+      return;
+    }
+
+    const reg = getWebhook(merchantAddress);
+    if (!reg) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+
+    if (isTestRateLimited(merchantAddress)) {
+      res.status(429).json({
+        error: "Rate limit exceeded",
+        limit: TEST_RATE_LIMIT,
+        windowSeconds: TEST_RATE_WINDOW_MS / 1000,
+      });
+      return;
+    }
+
+    const payload = {
+      event: "webhook_test",
+      contractId,
+      ledger: 0,
+      timestamp: new Date().toISOString(),
+      data: {
+        test: true,
+        message: "This is a synthetic test event from the webhook service.",
+      },
+    };
+
+    try {
+      const result = await deliverOnce(reg.url, payload);
+      res.status(200).json({
+        success: result.statusCode >= 200 && result.statusCode < 300,
+        targetUrl: reg.url,
+        statusCode: result.statusCode,
+        body: result.body,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(502).json({
+        success: false,
+        targetUrl: reg.url,
+        error: message,
+      });
+    }
+  });
+
   // ── DLQ Admin endpoints ────────────────────────────────────────────────────
   //
   // These endpoints are intended for admin / ops use only.  In production,

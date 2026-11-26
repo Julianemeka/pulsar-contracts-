@@ -175,11 +175,12 @@ router.get("/:id", async (req, res, next) => {
 
 /**
  * GET /api/payments
- * Query: { merchant, cursor, limit, date_start, date_end, amount_min, amount_max, status, sort_field, sort_order }
+ * Query: { merchant, cursor, limit, date_start, date_end, amount_min, amount_max, status, sort_field, sort_order, format }
+ * When format=csv, returns a CSV attachment instead of JSON.
  */
 router.get("/", async (req, res, next) => {
   try {
-    const { merchant, cursor, limit = 10, date_start, date_end, amount_min, amount_max, status = "Any", sort_field = "Date", sort_order = "Descending" } = req.query;
+    const { merchant, cursor, limit = 10, date_start, date_end, amount_min, amount_max, status = "Any", sort_field = "Date", sort_order = "Descending", format } = req.query;
     if (!merchant) {
       throw new ApiError(422, "InvalidInput", "merchant query param required");
     }
@@ -219,6 +220,33 @@ router.get("/", async (req, res, next) => {
   }
 });
 
+const CSV_COLUMNS = ["order_id", "merchant_address", "payer", "token", "amount", "status", "paid_at"];
+
+function csvEscape(value) {
+  if (value == null) return "";
+  let str;
+  if (Buffer.isBuffer(value)) {
+    str = value.toString("hex");
+  } else if (typeof value === "object") {
+    str = JSON.stringify(value);
+  } else {
+    str = String(value);
+  }
+  if (/[",\r\n]/.test(str)) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+function toCsv(data) {
+  const records = Array.isArray(data) ? data : (data?.records ?? []);
+  const lines = [CSV_COLUMNS.join(",")];
+  for (const record of records) {
+    lines.push(CSV_COLUMNS.map((col) => csvEscape(record?.[col])).join(","));
+  }
+  return lines.join("\r\n") + "\r\n";
+}
+
 function orderToScVal(order) {
   return xdr.ScVal.scvMap([
     new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol("order_id"), val: nativeToScVal(Buffer.from(order.order_id), { type: "bytes" }) }),
@@ -244,4 +272,5 @@ function buildFilter({ date_start, date_end, amount_min, amount_max, status }) {
   ]);
 }
 
+export { toCsv, csvEscape, CSV_COLUMNS };
 export default router;

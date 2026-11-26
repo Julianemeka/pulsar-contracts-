@@ -130,12 +130,15 @@ function post(url: string, body: string, requestId?: string): Promise<void> {
         headers,
       },
       (res) => {
-        if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-          resolve();
-        } else {
-          reject(new Error(`HTTP ${res.statusCode}`));
-        }
-        res.resume();
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("end", () => {
+          resolve({
+            statusCode: res.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString("utf8"),
+          });
+        });
+        res.on("error", reject);
       },
     );
     req.on("error", reject);
