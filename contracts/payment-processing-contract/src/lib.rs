@@ -52,6 +52,42 @@ pub struct PaymentContract;
 #[contractimpl]
 impl PaymentContract {
     // ── Admin ─────────────────────────────────────────────────────────────────
+    //
+    // Dual-storage pattern (SEC-014)
+    // ------------------------------
+    // Admin authority is currently persisted under TWO storage keys:
+    //
+    //   1. `DataKey::Admin` — the legacy single-admin pointer, read by
+    //      `helper::require_admin` and other single-admin code paths.
+    //   2. `DataKey::AdminConfig` — the multi-sig `AdminConfig` struct holding
+    //      the full admin list and signing threshold.
+    //
+    // INVARIANT: `AdminConfig.admins[0]` must always equal the address stored
+    // under `DataKey::Admin`. Every function that mutates admin state
+    // (`set_admin`, `transfer_admin`, `update_admin_config`) must preserve
+    // this invariant; `set_admin` and `transfer_admin` additionally assert it
+    // explicitly before returning. If the two keys ever diverge (e.g. through
+    // a partial upgrade), functions that check only `DataKey::Admin` would
+    // behave differently from those checking `AdminConfig`, creating an
+    // inconsistent permission boundary.
+    //
+    // TODO(future breaking release): consolidate admin authority into a single
+    // storage key (`AdminConfig`) and drop the legacy `DataKey::Admin` pointer.
+    // This is a breaking storage-layout change and is therefore deferred.
+
+    /// Assert the SEC-014 dual-storage invariant: the legacy single-admin
+    /// pointer (`DataKey::Admin`) must equal `AdminConfig.admins[0]`.
+    ///
+    /// Returns [`PaymentError::InvalidInput`] if the invariant is violated.
+    fn assert_admin_invariant(env: &Env) -> Result<(), PaymentError> {
+        let single = storage::get_admin(env).ok_or(PaymentError::InvalidInput)?;
+        let config = storage::get_admin_config(env).ok_or(PaymentError::InvalidInput)?;
+        let first = config.admins.get(0).ok_or(PaymentError::InvalidInput)?;
+        if single != first {
+            return Err(PaymentError::InvalidInput);
+        }
+        Ok(())
+    }
 
     /// One-time admin initialisation. Stores the first admin address.
     pub fn set_admin(env: Env, admins: Vec<Address>, threshold: u32) -> Result<(), PaymentError> {
@@ -68,6 +104,8 @@ impl PaymentContract {
         first.require_auth();
         storage::set_admin(&env, &first);
         storage::set_admin_config(&env, &types::AdminConfig { admins, threshold });
+        // SEC-014: enforce the dual-storage invariant before returning.
+        Self::assert_admin_invariant(&env)?;
         storage::set_contract_version(&env, 1);
         env.events()
             .publish((DataKey::Admin,), (String::from_str(&env, "admin_set"), first));
@@ -122,6 +160,8 @@ impl PaymentContract {
             config.admins = new_admins;
             storage::set_admin_config(&env, &config);
         }
+        // SEC-014: enforce the dual-storage invariant before returning.
+        Self::assert_admin_invariant(&env)?;
         env.events().publish(
             (String::from_str(&env, "admin_transferred"),),
             (current_admin, new_admin),
@@ -247,6 +287,8 @@ impl PaymentContract {
             admins: new_admins.clone(),
             threshold: new_threshold,
         });
+        // SEC-014: keep the dual-storage invariant intact.
+        Self::assert_admin_invariant(&env)?;
         env.events().publish(
             (String::from_str(&env, "admin_config_updated"),),
             (new_admins, new_threshold),

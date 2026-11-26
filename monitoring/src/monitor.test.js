@@ -171,6 +171,51 @@ describe("Config", () => {
     assert.equal(typeof cfg.largePaymentThreshold, "bigint");
     assert.ok(cfg.largePaymentThreshold > 0n);
   });
+
+  it("warns at startup when HORIZON_URL does not use https:", () => {
+    const savedUrl = process.env.HORIZON_URL;
+    const savedWarn = console.warn;
+    const warnings = [];
+    console.warn = (...args) => warnings.push(args.join(" "));
+
+    try {
+      process.env.HORIZON_URL = "http://horizon.example.com";
+      // Fresh require cache so config.js re-evaluates with the new env.
+      const configPath = require.resolve("./config");
+      delete require.cache[configPath];
+      const cfg = require("./config");
+
+      assert.equal(cfg.horizonUrl, "http://horizon.example.com");
+      assert.ok(
+        warnings.some((w) => /https/i.test(w)),
+        `Expected an HTTPS warning, got: ${JSON.stringify(warnings)}`
+      );
+    } finally {
+      console.warn = savedWarn;
+      if (savedUrl === undefined) delete process.env.HORIZON_URL;
+      else process.env.HORIZON_URL = savedUrl;
+      // Reset cache so later tests see the original environment.
+      delete require.cache[require.resolve("./config")];
+    }
+  });
+
+  it("reads HORIZON_CA_CERT into config.horizonCaCert when set", () => {
+    const savedCa = process.env.HORIZON_CA_CERT;
+    const caPem = "-----BEGIN CERTIFICATE-----\nTEST\n-----END CERTIFICATE-----";
+
+    try {
+      process.env.HORIZON_CA_CERT = caPem;
+      const configPath = require.resolve("./config");
+      delete require.cache[configPath];
+      const cfg = require("./config");
+
+      assert.equal(cfg.horizonCaCert, caPem);
+    } finally {
+      if (savedCa === undefined) delete process.env.HORIZON_CA_CERT;
+      else process.env.HORIZON_CA_CERT = savedCa;
+      delete require.cache[require.resolve("./config")];
+    }
+  });
 });
 
 // ── Alert webhook retry logic ──────────────────────────────────────────────
